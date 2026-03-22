@@ -9,17 +9,14 @@ export const registerArenaHandlers = (io, socket) => {
       return socket.emit("arena_error", { message: result.error });
     }
 
-    // Join the arena socket room so this player receives queue/expiry broadcasts
     socket.join(`arena:${arenaId}`);
 
     console.log(
       `[Arena] ${socket.user.userName} joined arena ${arenaId}. Queue: ${result.queueLength}`,
     );
 
-    // Broadcast updated queue to everyone waiting (including this player)
     arenaService.broadcastQueueUpdate(arenaId);
 
-    // Try to form a match
     const newGame = arenaService.matchArena(arenaId);
     startMatch(newGame);
   });
@@ -31,7 +28,6 @@ export const registerArenaHandlers = (io, socket) => {
   });
 
   socket.on("disconnect", () => {
-    // Returns list of arenas this socket was in so we can broadcast updates
     const affected = arenaService.removeSocketFromAllArenas(socket.id);
     for (const arenaId of affected) {
       arenaService.broadcastQueueUpdate(arenaId);

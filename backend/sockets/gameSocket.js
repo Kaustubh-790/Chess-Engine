@@ -104,7 +104,6 @@ const handleGameOver = async (io, game, winner, reason) => {
       const { arenaService } = await import("../arena/arenaService.js");
       const { startMatch } = await import("../utils/socketStartMatch.js");
 
-      // Add ALL players to the queue first, then match
       const joined = [];
 
       if (players.white.socket.connected) {
@@ -114,7 +113,6 @@ const handleGameOver = async (io, game, winner, reason) => {
           players.white.user,
         );
         if (res.success) {
-          // Rejoin the arena socket room so they receive queue broadcasts again
           players.white.socket.join(`arena:${finishedArenaId}`);
           joined.push(true);
         }
@@ -132,10 +130,8 @@ const handleGameOver = async (io, game, winner, reason) => {
         }
       }
 
-      // Broadcast queue update with all newly rejoined players visible
       arenaService.broadcastQueueUpdate(finishedArenaId);
 
-      // Try to form as many matches as the newly joined players allow
       for (let i = 0; i < joined.length; i++) {
         const newGame = arenaService.matchArena(finishedArenaId);
         if (newGame) startMatch(newGame);

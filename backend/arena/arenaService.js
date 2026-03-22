@@ -101,12 +101,9 @@ class ArenaService {
     const player1 = arena.queue.shift();
     const player2 = arena.queue.shift();
 
-    // Players are leaving the waiting queue — leave the arena socket room
-    // (they'll be in the game room now instead)
     player1.socket.leave(`arena:${arenaId}`);
     player2.socket.leave(`arena:${arenaId}`);
 
-    // Broadcast the updated (shorter) queue to remaining waiters
     this.broadcastQueueUpdate(arenaId);
 
     return gameService.createGame(player1, player2, arenaId);
