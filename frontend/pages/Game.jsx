@@ -11,16 +11,17 @@ const Game = () => {
   const navigate = useNavigate();
   const socket = useSocket();
 
-  // ─── gameData as STATE (not memo) so it re-renders on new match ──────────
   const [gameData, setGameData] = useState(() => {
-    if (location.state) return location.state;
+    if (location.state?.gameId) return location.state;
     const stored = sessionStorage.getItem(`game-${routeGameId}`);
     return stored ? JSON.parse(stored) : null;
   });
 
-  // Derive current gameId from live state, not just the route param
-  const gameId = gameData?.gameId || routeGameId;
+  const [rejoinStatus, setRejoinStatus] = useState(
+    gameData ? "pending" : "pending",
+  );
 
+  const gameId = gameData?.gameId || routeGameId;
   const playerColor = gameData?.color || "white";
   const opponentName = gameData?.opponent || "Opponent";
   const opponentRating = gameData?.opponentRating ?? "?";
@@ -28,19 +29,32 @@ const Game = () => {
   const chessRef = useRef(new Chess());
   const serverFenRef = useRef(chessRef.current.fen());
 
-  const [fen, setFen] = useState(chessRef.current.fen());
+  useEffect(() => {
+    if (gameData?.fen) {
+      try {
+        chessRef.current.load(gameData.fen);
+        serverFenRef.current = gameData.fen;
+      } catch (_) {}
+    }
+  }, []);
+
+  const [fen, setFen] = useState(() => gameData?.fen || new Chess().fen());
   const [turn, setTurn] = useState("w");
   const [whiteTime, setWhiteTime] = useState(gameData?.whiteTime || 0);
   const [blackTime, setBlackTime] = useState(gameData?.blackTime || 0);
   const [gameOver, setGameOver] = useState(null);
+  const [requeue, setRequeue] = useState(null);
+  const [statusText, setStatusText] = useState("");
+  const [isLookingForMatch, setIsLookingForMatch] = useState(false);
+  const [arenaExpired, setArenaExpired] = useState(false);
+  const [arenaEndTime, setArenaEndTime] = useState(null);
+  const [arenaTimeLeft, setArenaTimeLeft] = useState("");
 
   const formatClock = (ms) => {
     if (ms === undefined || ms === null) return "0:00";
     const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
     const m = Math.floor(totalSeconds / 60);
     const s = totalSeconds % 60;
-    
-    // If less than 20s, show tenths for more urgency
     if (ms < 20000 && ms > 0) {
       const tenths = Math.floor((ms % 1000) / 100);
       return `${m}:${s.toString().padStart(2, "0")}.${tenths}`;
@@ -48,30 +62,21 @@ const Game = () => {
     return `${m}:${s.toString().padStart(2, "0")}`;
   };
 
-  const [requeue, setRequeue] = useState(null);
-  const [statusText, setStatusText] = useState("");
-  const [isLookingForMatch, setIsLookingForMatch] = useState(false);
-  const [arenaExpired, setArenaExpired] = useState(false);
-
   useEffect(() => {
-    if (gameOver || isLookingForMatch || !gameData?.timeControl || gameData.timeControl === "unlimited") return;
-
+    if (
+      gameOver ||
+      isLookingForMatch ||
+      !gameData?.timeControl ||
+      gameData.timeControl === "unlimited"
+    )
+      return;
     const interval = setInterval(() => {
-      if (turn === "w") {
-        setWhiteTime((prev) => Math.max(0, prev - 100));
-      } else {
-        setBlackTime((prev) => Math.max(0, prev - 100));
-      }
+      if (turn === "w") setWhiteTime((p) => Math.max(0, p - 100));
+      else setBlackTime((p) => Math.max(0, p - 100));
     }, 100);
-
     return () => clearInterval(interval);
   }, [turn, gameOver, isLookingForMatch, gameData?.timeControl]);
 
-  // Arena countdown
-  const [arenaEndTime, setArenaEndTime] = useState(null);
-  const [arenaTimeLeft, setArenaTimeLeft] = useState("");
-
-  // ─── Arena countdown tick ─────────────────────────────────────────────────
   useEffect(() => {
     if (!arenaEndTime) return;
     const tick = () => {
@@ -89,11 +94,60 @@ const Game = () => {
     return () => clearInterval(id);
   }, [arenaEndTime]);
 
-  // ─── Socket listeners ─────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!socket || !routeGameId) return;
+    socket.emit("rejoin_game", { gameId: routeGameId });
+  }, [socket, routeGameId]);
+
   useEffect(() => {
     if (!socket) return;
 
-    const onBoardSync = ({ fen: newFen, turn: newTurn, whiteTime: newWt, blackTime: newBt }) => {
+    const onRejoinSuccess = (data) => {
+      console.log("[Rejoin] Socket re-registered for game", data.gameId);
+      setRejoinStatus("ok");
+
+      const chess = new Chess();
+      try {
+        chess.loadPgn(data.pgn);
+      } catch (_) {
+        chess.load(data.fen);
+      }
+      chessRef.current = chess;
+      serverFenRef.current = data.fen;
+
+      setFen(data.fen);
+      setTurn(data.turn);
+      if (data.whiteTime !== undefined) setWhiteTime(data.whiteTime);
+      if (data.blackTime !== undefined) setBlackTime(data.blackTime);
+      setGameOver(null);
+      setStatusText("");
+
+      const restored = {
+        gameId: data.gameId,
+        arenaId: data.arenaId,
+        color: data.color,
+        opponent: data.opponent,
+        opponentRating: data.opponentRating,
+        fen: data.fen,
+        timeControl: data.timeControl,
+        whiteTime: data.whiteTime,
+        blackTime: data.blackTime,
+      };
+      setGameData(restored);
+      sessionStorage.setItem(`game-${data.gameId}`, JSON.stringify(restored));
+    };
+
+    const onRejoinFailed = ({ reason }) => {
+      console.log("[Rejoin] Failed:", reason);
+      setRejoinStatus("failed");
+    };
+
+    const onBoardSync = ({
+      fen: newFen,
+      turn: newTurn,
+      whiteTime: newWt,
+      blackTime: newBt,
+    }) => {
       chessRef.current.load(newFen);
       serverFenRef.current = newFen;
       setFen(newFen);
@@ -113,11 +167,9 @@ const Game = () => {
     const onGameOver = (data) => setGameOver(data);
 
     const onMatchStarted = (newGameData) => {
-      // ── Reset ALL game state for the new match ──────────────────────────
       const freshChess = new Chess();
       chessRef.current = freshChess;
       serverFenRef.current = freshChess.fen();
-
       setFen(freshChess.fen());
       setTurn("w");
       setGameOver(null);
@@ -125,19 +177,16 @@ const Game = () => {
       setIsLookingForMatch(false);
       setArenaExpired(false);
       setStatusText("");
-      if (newGameData.whiteTime !== undefined) setWhiteTime(newGameData.whiteTime);
-      if (newGameData.blackTime !== undefined) setBlackTime(newGameData.blackTime);
-
-      // ── Update gameData STATE so playerColor / opponentName re-render ──
+      setRejoinStatus("ok");
+      if (newGameData.whiteTime !== undefined)
+        setWhiteTime(newGameData.whiteTime);
+      if (newGameData.blackTime !== undefined)
+        setBlackTime(newGameData.blackTime);
       setGameData(newGameData);
-
-      // Keep session storage fresh for page-refresh recovery
       sessionStorage.setItem(
         `game-${newGameData.gameId}`,
         JSON.stringify(newGameData),
       );
-
-      // Update URL to new gameId without a full navigation
       window.history.replaceState(
         newGameData,
         "",
@@ -176,6 +225,8 @@ const Game = () => {
       if (endTime) setArenaEndTime(endTime);
     };
 
+    socket.on("rejoin_success", onRejoinSuccess);
+    socket.on("rejoin_failed", onRejoinFailed);
     socket.on("board_sync", onBoardSync);
     socket.on("move_rejected", onMoveRejected);
     socket.on("game_over", onGameOver);
@@ -185,6 +236,8 @@ const Game = () => {
     socket.on("arena_queue_update", onQueueUpdate);
 
     return () => {
+      socket.off("rejoin_success", onRejoinSuccess);
+      socket.off("rejoin_failed", onRejoinFailed);
       socket.off("board_sync", onBoardSync);
       socket.off("move_rejected", onMoveRejected);
       socket.off("game_over", onGameOver);
@@ -195,7 +248,6 @@ const Game = () => {
     };
   }, [socket]);
 
-  // ─── Requeue countdown → emit join_arena ─────────────────────────────────
   useEffect(() => {
     if (!requeue || requeue.secondsLeft <= 0) return;
     const timer = setInterval(() => {
@@ -213,7 +265,6 @@ const Game = () => {
     return () => clearInterval(timer);
   }, [requeue, socket]);
 
-  // ─── Move handler ─────────────────────────────────────────────────────────
   const onPieceDrop = useCallback(
     ({ piece, sourceSquare, targetSquare }) => {
       if (!targetSquare) return false;
@@ -264,7 +315,6 @@ const Game = () => {
     }
   };
 
-  // ─── Move history ─────────────────────────────────────────────────────────
   const moveHistory = chessRef.current.history();
   const movePairs = [];
   for (let i = 0; i < moveHistory.length; i += 2) {
@@ -295,6 +345,7 @@ const Game = () => {
       repetition: "Threefold Repetition",
       insufficient_material: "Insufficient Material",
       agreement: "by Agreement",
+      timeout: "on Time",
       arena_expired: "The arena time limit was reached",
     })[reason] || reason;
 
@@ -303,7 +354,32 @@ const Game = () => {
     typeof window !== "undefined" ? window.innerWidth - 48 : 560,
   );
 
-  if (!gameData) {
+  if (!gameData && rejoinStatus === "pending") {
+    return (
+      <div
+        className="game-container"
+        style={{ justifyContent: "center", alignItems: "center" }}
+      >
+        <div style={{ textAlign: "center", color: "#94a3b8" }}>
+          <div
+            style={{
+              width: 48,
+              height: 48,
+              border: "4px solid #334155",
+              borderTop: "4px solid #f97316",
+              borderRadius: "50%",
+              animation: "spin 0.8s linear infinite",
+              margin: "0 auto 1rem",
+            }}
+          />
+          <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+          <p>Reconnecting to game…</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (rejoinStatus === "failed" && !gameData) {
     return (
       <div
         className="game-container"
@@ -313,13 +389,15 @@ const Game = () => {
           <h2 style={{ color: "#f97316", marginBottom: "0.5rem" }}>
             Game not found
           </h2>
-          <p>This game session may have expired.</p>
+          <p style={{ marginBottom: "1rem" }}>
+            This game has ended or doesn't exist.
+          </p>
           <button
             className="btn-lobby"
-            style={{ marginTop: "1rem", maxWidth: 200 }}
+            style={{ maxWidth: 200 }}
             onClick={() => navigate("/")}
           >
-            Back to Lobby
+            Back to Home
           </button>
         </div>
       </div>
@@ -328,7 +406,6 @@ const Game = () => {
 
   return (
     <div className="game-container">
-      {/* ─── Board Column ─── */}
       <div className="board-column">
         <div
           className={`player-panel ${turn === (topColor === "white" ? "w" : "b") ? "active-turn" : ""}`}
@@ -343,7 +420,9 @@ const Game = () => {
             </div>
           </div>
           {gameData?.timeControl !== "unlimited" && (
-            <div className={`player-clock ${turn === (topColor === "white" ? "w" : "b") ? "bg-orange-600 outline outline-2 outline-white text-white" : "bg-slate-700 text-slate-300"} font-mono text-xl font-bold px-3 py-1.5 rounded-md min-w-[5rem] text-center`}>
+            <div
+              className={`player-clock ${turn === (topColor === "white" ? "w" : "b") ? "bg-orange-600 outline outline-2 outline-white text-white" : "bg-slate-700 text-slate-300"} font-mono text-xl font-bold px-3 py-1.5 rounded-md min-w-[5rem] text-center`}
+            >
               {formatClock(topColor === "white" ? whiteTime : blackTime)}
             </div>
           )}
@@ -388,7 +467,9 @@ const Game = () => {
             </div>
           </div>
           {gameData?.timeControl !== "unlimited" && (
-            <div className={`player-clock ${isMyTurn && !gameOver ? "bg-orange-600 outline outline-2 outline-white text-white" : "bg-slate-700 text-slate-300"} font-mono text-xl font-bold px-3 py-1.5 rounded-md min-w-[5rem] text-center`}>
+            <div
+              className={`player-clock ${isMyTurn && !gameOver ? "bg-orange-600 outline outline-2 outline-white text-white" : "bg-slate-700 text-slate-300"} font-mono text-xl font-bold px-3 py-1.5 rounded-md min-w-[5rem] text-center`}
+            >
               {formatClock(bottomColor === "white" ? whiteTime : blackTime)}
             </div>
           )}
@@ -398,7 +479,6 @@ const Game = () => {
         </div>
       </div>
 
-      {/* ─── Sidebar ─── */}
       <div className="game-sidebar">
         {gameData?.arenaId && (
           <div className="move-history-card">
@@ -517,9 +597,8 @@ const Game = () => {
           <button
             className="btn-lobby"
             onClick={() => {
-              if (isLookingForMatch && gameData?.arenaId) {
+              if (isLookingForMatch && gameData?.arenaId)
                 socket.emit("leave_arena", { arenaId: gameData.arenaId });
-              }
               navigate(gameData?.arenaId ? `/arena/${gameData.arenaId}` : "/");
             }}
           >
@@ -528,7 +607,6 @@ const Game = () => {
         </div>
       </div>
 
-      {/* ─── Game Over Modal ─── */}
       {gameOver && (
         <div className="game-over-overlay">
           <div className="game-over-modal">
@@ -536,7 +614,6 @@ const Game = () => {
             <div className="game-over-reason">
               {getReasonText(gameOver.reason)}
             </div>
-
             {gameOver.ratingChanges && (
               <div className="rating-changes">
                 <div className="rating-change-item">
@@ -559,7 +636,6 @@ const Game = () => {
                 </div>
               </div>
             )}
-
             <div className="game-over-actions">
               {arenaExpired ? (
                 <button
@@ -585,7 +661,6 @@ const Game = () => {
         </div>
       )}
 
-      {/* ─── Looking for Match Overlay ─── */}
       {isLookingForMatch && !arenaExpired && (
         <div
           className="game-over-overlay"
@@ -658,7 +733,6 @@ const Game = () => {
         </div>
       )}
 
-      {/* ─── Requeue Banner ─── */}
       {requeue && (
         <div className="requeue-banner" style={{ zIndex: 9999 }}>
           Queuing for next match in {requeue.secondsLeft}s…

@@ -4,8 +4,6 @@ import { useSocket } from "../contexts/SocketContext";
 import { useAuth } from "../contexts/AuthContext";
 import api from "../services/axios";
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
 const formatTimeLeft = (endTime) => {
   if (!endTime) return null;
   const diff = endTime - Date.now();
@@ -17,8 +15,6 @@ const formatTimeLeft = (endTime) => {
     expired: false,
   };
 };
-
-// ─── Sub-components ───────────────────────────────────────────────────────────
 
 const TimerDisplay = ({ endTime }) => {
   const [display, setDisplay] = useState(() => formatTimeLeft(endTime));
@@ -33,7 +29,6 @@ const TimerDisplay = ({ endTime }) => {
 
   if (!display) return null;
 
-  // Urgency colour: red under 60s, amber under 5 min
   const diff = endTime - Date.now();
   const colour = display.expired
     ? "text-red-500"
@@ -86,8 +81,6 @@ const QueueList = ({ queue }) => (
   </div>
 );
 
-// ─── Main component ───────────────────────────────────────────────────────────
-
 const Arena = () => {
   const { arenaId: paramArenaId } = useParams();
   const navigate = useNavigate();
@@ -98,14 +91,17 @@ const Arena = () => {
   const [endTime, setEndTime] = useState(null);
   const [inLobby, setInLobby] = useState(false);
   const [duration, setDuration] = useState(10);
-  const [timeControl, setTimeControl] = useState({ label: "3+2", initial: 3, increment: 2 });
+  const [timeControl, setTimeControl] = useState({
+    label: "3+2",
+    initial: 3,
+    increment: 2,
+  });
   const [joinId, setJoinId] = useState("");
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
   const [queue, setQueue] = useState([]);
   const [expired, setExpired] = useState(false);
 
-  // ─── Auto-join from URL ───────────────────────────────────────────────────
   useEffect(() => {
     if (paramArenaId && socket) {
       setArenaId(paramArenaId);
@@ -114,7 +110,6 @@ const Arena = () => {
     }
   }, [paramArenaId, socket]);
 
-  // ─── Socket listeners ─────────────────────────────────────────────────────
   useEffect(() => {
     if (!socket) return;
 
@@ -154,7 +149,6 @@ const Arena = () => {
     };
   }, [socket, navigate, endTime]);
 
-  // ─── Create ───────────────────────────────────────────────────────────────
   const handleCreate = async () => {
     setError("");
     try {
@@ -169,7 +163,6 @@ const Arena = () => {
     }
   };
 
-  // ─── Join ─────────────────────────────────────────────────────────────────
   const handleJoin = () => {
     const id = joinId.trim();
     if (!id) {
@@ -182,7 +175,6 @@ const Arena = () => {
     setInLobby(true);
   };
 
-  // ─── Leave ────────────────────────────────────────────────────────────────
   const handleLeave = useCallback(() => {
     if (arenaId) socket.emit("leave_arena", { arenaId });
     setInLobby(false);
@@ -193,20 +185,15 @@ const Arena = () => {
     navigate("/");
   }, [arenaId, socket, navigate]);
 
-  // ─── Copy ─────────────────────────────────────────────────────────────────
   const handleCopy = () => {
     navigator.clipboard.writeText(arenaId);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // LOBBY VIEW — two-column layout
-  // ─────────────────────────────────────────────────────────────────────────
   if (inLobby) {
     return (
       <div className="min-h-screen bg-slate-900 text-white flex flex-col">
-        {/* Top bar */}
         <div className="border-b border-slate-700/60 px-6 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <span className="text-orange-500 font-bold text-lg">
@@ -230,9 +217,7 @@ const Arena = () => {
           </button>
         </div>
 
-        {/* Body */}
         <div className="flex flex-1 overflow-hidden">
-          {/* ── Main area ── */}
           <main className="flex-1 flex items-center justify-center p-8">
             {expired ? (
               <div className="text-center space-y-4">
@@ -250,7 +235,6 @@ const Arena = () => {
               </div>
             ) : (
               <div className="text-center space-y-6 max-w-sm w-full">
-                {/* Arena ID card */}
                 <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
                   <p className="text-xs uppercase tracking-widest text-slate-400 mb-2">
                     Arena ID — Share with friends
@@ -306,14 +290,11 @@ const Arena = () => {
             )}
           </main>
 
-          {/* ── Sidebar ── */}
           <aside className="w-72 border-l border-slate-700/60 flex flex-col bg-slate-800/40">
-            {/* Timer */}
             <div className="p-5 border-b border-slate-700/60">
               <TimerDisplay endTime={endTime} />
             </div>
 
-            {/* Queue header */}
             <div className="px-4 py-3 border-b border-slate-700/60 flex items-center justify-between">
               <span className="text-sm font-semibold text-slate-200">
                 Queue
@@ -323,12 +304,10 @@ const Arena = () => {
               </span>
             </div>
 
-            {/* Queue list */}
             <div className="flex-1 p-3 overflow-y-auto">
               <QueueList queue={queue} />
             </div>
 
-            {/* Footer hint */}
             <div className="p-4 border-t border-slate-700/60">
               <p className="text-xs text-slate-500 text-center">
                 Matched games start automatically when 2+ players are waiting.
@@ -340,9 +319,6 @@ const Arena = () => {
     );
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // CREATE / JOIN VIEW
-  // ─────────────────────────────────────────────────────────────────────────
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-slate-900 text-white p-4">
       <div className="max-w-md w-full bg-slate-800 p-8 rounded-xl shadow-lg border border-slate-700">
@@ -354,12 +330,11 @@ const Arena = () => {
           clock runs out!
         </p>
 
-        {/* Create */}
         <div className="mb-5 p-4 bg-slate-700/60 rounded-xl border border-slate-600/40">
           <h2 className="text-base font-semibold mb-3 text-white">
             Create Arena
           </h2>
-          
+
           <label className="block text-xs text-slate-400 mb-1">
             Time Control
           </label>
@@ -368,7 +343,7 @@ const Arena = () => {
               { label: "1 min", initial: 1, increment: 0 },
               { label: "3 min", initial: 3, increment: 0 },
               { label: "3+2", initial: 3, increment: 2 },
-              { label: "10 min", initial: 10, increment: 0 }
+              { label: "10 min", initial: 10, increment: 0 },
             ].map((tc) => (
               <button
                 key={tc.label}
@@ -403,7 +378,6 @@ const Arena = () => {
           </button>
         </div>
 
-        {/* Join */}
         <div className="mb-5 p-4 bg-slate-700/60 rounded-xl border border-slate-600/40">
           <h2 className="text-base font-semibold mb-3 text-white">
             Join Arena

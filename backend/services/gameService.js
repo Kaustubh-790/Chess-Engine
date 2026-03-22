@@ -33,9 +33,7 @@ class GameService {
 
   getQueueLength() {
     let total = 0;
-    for (const queue of this.arenaQueues.values()) {
-      total += queue.length;
-    }
+    for (const queue of this.arenaQueues.values()) total += queue.length;
     return total;
   }
 
@@ -52,7 +50,6 @@ class GameService {
 
   createGame(player1, player2, arenaId = null, timeControl = null) {
     const gameId = crypto.randomUUID();
-
     const tc = timeControl || { label: "unlimited", initial: 0, increment: 0 };
     const initialMs = tc.initial * 60 * 1000;
 
@@ -77,6 +74,33 @@ class GameService {
     return this.activeGames.get(gameId);
   }
 
+  getGameByUserId(userId) {
+    for (const game of this.activeGames.values()) {
+      const wId = game.players.white.user._id.toString();
+      const bId = game.players.black.user._id.toString();
+      if (wId === userId.toString() || bId === userId.toString()) {
+        return game;
+      }
+    }
+    return null;
+  }
+
+  rejoinGame(gameId, userId, newSocket) {
+    const game = this.activeGames.get(gameId);
+    if (!game) return null;
+
+    const uid = userId.toString();
+    let color = null;
+
+    if (game.players.white.user._id.toString() === uid) color = "white";
+    else if (game.players.black.user._id.toString() === uid) color = "black";
+
+    if (!color) return null;
+
+    game.players[color].socket = newSocket;
+    return { game, color };
+  }
+
   getGamesByArenaId(arenaId) {
     const games = [];
     for (const game of this.activeGames.values()) {
@@ -87,9 +111,7 @@ class GameService {
 
   removeGame(gameId) {
     const game = this.activeGames.get(gameId);
-    if (game && game.timeoutTimer) {
-      clearTimeout(game.timeoutTimer);
-    }
+    if (game?.timeoutTimer) clearTimeout(game.timeoutTimer);
     this.activeGames.delete(gameId);
   }
 }

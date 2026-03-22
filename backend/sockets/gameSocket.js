@@ -142,13 +142,48 @@ const handleGameOver = async (io, game, winner, reason) => {
 };
 
 export const registerGameHandler = (io, socket) => {
+  socket.on("rejoin_game", ({ gameId }) => {
+    const userId = socket.user._id.toString();
+
+    const result = gameService.rejoinGame(gameId, userId, socket);
+
+    if (!result) {
+      return socket.emit("rejoin_failed", { reason: "game_not_found" });
+    }
+
+    const { game, color } = result;
+    const { instance, players, timeControl } = game;
+
+    socket.join(gameId);
+
+    console.log(
+      `[Rejoin] ${socket.user.userName} rejoined game ${gameId} as ${color}`,
+    );
+
+    const opponentColor = color === "white" ? "black" : "white";
+    const opponent = players[opponentColor];
+
+    socket.emit("rejoin_success", {
+      gameId,
+      arenaId: game.arenaId ?? null,
+      color,
+      opponent: opponent.user.userName,
+      opponentRating: opponent.user.rating,
+      fen: instance.fen(),
+      turn: instance.turn(),
+      pgn: instance.pgn(),
+      timeControl: timeControl ? timeControl.label : "unlimited",
+      whiteTime: players.white.time,
+      blackTime: players.black.time,
+    });
+  });
+
   socket.on("resign", async ({ gameId }) => {
     const game = gameService.getGame(gameId);
     if (!game)
       return socket.emit("move_rejected", { reason: "game_not_found" });
 
     const { players } = game;
-
     const isWhite = players.white.socket.id === socket.id;
     const isBlack = players.black.socket.id === socket.id;
 
@@ -161,10 +196,8 @@ export const registerGameHandler = (io, socket) => {
 
   socket.on("move_attempt", async ({ gameId, from, to, promotion }) => {
     const game = gameService.getGame(gameId);
-
-    if (!game) {
+    if (!game)
       return socket.emit("move_rejected", { reason: "game_not_found" });
-    }
 
     const { instance, players } = game;
 
@@ -172,13 +205,11 @@ export const registerGameHandler = (io, socket) => {
     const isBlack = players.black.socket.id === socket.id;
     const playerColor = isWhite ? "w" : isBlack ? "b" : null;
 
-    if (!playerColor) {
+    if (!playerColor)
       return socket.emit("move_rejected", { reason: "not_your_game" });
-    }
 
-    if (instance.turn() !== playerColor) {
+    if (instance.turn() !== playerColor)
       return socket.emit("move_rejected", { reason: "not_your_turn" });
-    }
 
     try {
       const piece = instance.get(from);
@@ -186,15 +217,11 @@ export const registerGameHandler = (io, socket) => {
         piece && piece.type === "p" && (to.endsWith("8") || to.endsWith("1"));
 
       const moveData = { from, to };
-      if (isPromotion) {
-        moveData.promotion = promotion || "q";
-      }
+      if (isPromotion) moveData.promotion = promotion || "q";
 
       const move = instance.move(moveData);
-
-      if (!move) {
+      if (!move)
         return socket.emit("move_rejected", { reason: "illegal_move" });
-      }
 
       const now = Date.now();
       const activeColorStr = isWhite ? "white" : "black";
@@ -218,7 +245,8 @@ export const registerGameHandler = (io, socket) => {
           return handleGameOver(io, game, nextColorStr, "timeout");
         }
 
-        players[activeColorStr].time += (game.timeControl.increment || 0) * 1000;
+        players[activeColorStr].time +=
+          (game.timeControl.increment || 0) * 1000;
         game.lastMoveTime = now;
 
         if (game.timeoutTimer) clearTimeout(game.timeoutTimer);
