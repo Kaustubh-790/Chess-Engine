@@ -1,6 +1,4 @@
 import { gameService } from "../services/gameService.js";
-import Match from "../models/Match.js";
-import User from "../models/User.js";
 import { calculateElo } from "../utils/calculateElo.js";
 
 const handleGameOver = async (io, game, winner, reason) => {
@@ -48,45 +46,23 @@ const handleGameOver = async (io, game, winner, reason) => {
   });
 
   try {
-    await Promise.all([
-      User.findByIdAndUpdate(players.white.user._id, {
-        $inc: {
-          gamesPlayed: 1,
-          wins: winner === "white" ? 1 : 0,
-          losses: winner === "black" ? 1 : 0,
-          draws: winner === "draw" ? 1 : 0,
-        },
-        $set: { rating: whiteStats.newRating },
-      }),
-      User.findByIdAndUpdate(players.black.user._id, {
-        $inc: {
-          gamesPlayed: 1,
-          wins: winner === "black" ? 1 : 0,
-          losses: winner === "white" ? 1 : 0,
-          draws: winner === "draw" ? 1 : 0,
-        },
-        $set: { rating: blackStats.newRating },
-      }),
-    ]);
-
-    await Match.create({
+    const { matchResultQueue } = await import("../workers/dbQueue.js");
+    await matchResultQueue.add("saveMatch", {
       gameId,
-      whitePlayer: players.white.user._id,
-      blackPlayer: players.black.user._id,
+      whitePlayerId: players.white.user._id,
+      blackPlayerId: players.black.user._id,
       winner,
-      endReason: reason,
+      reason,
       pgn: finalPgn,
-      ratingChanges: {
-        white: whiteStats.delta,
-        black: blackStats.delta,
-      },
+      whiteStats,
+      blackStats,
       moveCount: instance.history().length,
     });
 
-    console.log(`Match ${gameId} saved. Ratings updated in db.`);
+    console.log(`[Queue] Match ${gameId} dispatched to background worker.`);
   } catch (err) {
     console.error(
-      `Failed to save match data for ${gameId} in db:`,
+      `Failed to dispatch match data for ${gameId} to queue:`,
       err.message,
     );
   }

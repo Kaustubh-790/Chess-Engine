@@ -9,6 +9,7 @@ import setupSockets from "./sockets/index.js";
 import arenaRoutes from "./routes/arenaRoutes.js";
 import cookieParser from "cookie-parser";
 import { createRedisAdapter } from "./config/redis.js";
+import "./workers/dbWorker.js";
 
 dotenv.config();
 
