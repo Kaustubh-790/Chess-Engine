@@ -3,6 +3,15 @@ import User from "../models/User.js";
 import { emailRegex, passwordRegex } from "../utils/regex.js";
 import { generateToken } from "../utils/generateTokens.js";
 
+const setTokenCookie = (res, token) => {
+  res.cookie("jwt", token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV !== "development",
+    sameSite: "strict",
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+  });
+};
+
 export const registerEmailPassword = async (req, res) => {
   const { userName, email, password } = req.body;
 
@@ -48,9 +57,10 @@ export const registerEmailPassword = async (req, res) => {
 
     const token = generateToken(user);
 
+    setTokenCookie(res, token);
+
     return res.status(201).json({
       message: "User registered successfully",
-      token,
       user,
     });
   } catch (error) {
@@ -89,9 +99,11 @@ export const loginEmailPassword = async (req, res) => {
 
     const token = generateToken(user);
 
+    setTokenCookie(res, token);
+
     return res.status(200).json({
       message: "Login successful",
-      token,
+
       user,
     });
   } catch (err) {
@@ -125,9 +137,10 @@ export const handleGoogleAuth = async (req, res) => {
 
     const token = generateToken(user);
 
+    setTokenCookie(res, token);
+
     return res.status(200).json({
       message: "Login successful",
-      token,
       user,
     });
   } catch (err) {
@@ -136,4 +149,12 @@ export const handleGoogleAuth = async (req, res) => {
       error: "Invalid or expired token",
     });
   }
+};
+
+export const logoutUser = (req, res) => {
+  res.cookie("jwt", "", {
+    httpOnly: true,
+    expires: new Date(0),
+  });
+  res.status(200).json({ message: "Logged out successfully" });
 };

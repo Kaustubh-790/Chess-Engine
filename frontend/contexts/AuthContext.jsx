@@ -1,11 +1,5 @@
-import React, {
-  createContext,
-  useContext,
-  useEffect,
-  useSate,
-  useRef,
-  useState,
-} from "react";
+import React, { createContext, useContext, useState, useEffect } from "react";
+import { auth } from "../config/firebase";
 import {
   signInWithEmailAndPassword,
   signInWithPopup,
@@ -13,7 +7,6 @@ import {
   signOut,
   onAuthStateChanged,
 } from "firebase/auth";
-import { auth } from "../config/firebase";
 import api from "../services/axios";
 
 const AuthContext = createContext();
@@ -25,7 +18,6 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
 
   const handleAuthResponse = (res) => {
-    localStorage.setItem("token", res.data.token);
     localStorage.setItem("user", JSON.stringify(res.data.user));
     setCurrentUser(res.data.user);
   };
@@ -42,54 +34,55 @@ export const AuthProvider = ({ children }) => {
       await signInWithEmailAndPassword(auth, email, password);
 
       return res.data;
-    } catch (err) {
-      console.error("email registration error", err);
-      throw err;
+    } catch (error) {
+      console.error("Registration failed:", error);
+      throw error;
     }
   };
 
   const loginEmailPassword = async (email, password) => {
     try {
-      const userCredentials = await signInWithEmailAndPassword(
+      const userCredential = await signInWithEmailAndPassword(
         auth,
         email,
         password,
       );
-      const idToken = await userCredentials.user.getIdToken();
+      const idToken = await userCredential.user.getIdToken();
 
       const res = await api.post("/auth/login-email", { idToken });
       handleAuthResponse(res);
 
       return res.data;
-    } catch (err) {
-      console.error("email login error", err);
-      throw err;
+    } catch (error) {
+      console.error("Login failed:", error);
+      throw error;
     }
   };
 
-  const googleLogin = async () => {
+  const loginWithGoogle = async () => {
     try {
       const provider = new GoogleAuthProvider();
-      const userCredentials = await signInWithPopup(auth, provider);
-      const idToken = await userCredentials.user.getIdToken();
+      const userCredential = await signInWithPopup(auth, provider);
+      const idToken = await userCredential.user.getIdToken();
 
-      const res = await api.post("/auth/login-google", { idToken });
+      const res = await api.post("/auth/google", { idToken });
       handleAuthResponse(res);
 
       return res.data;
-    } catch (err) {
-      console.error("google login error", err);
-      throw err;
+    } catch (error) {
+      console.error("Google login failed:", error);
+      throw error;
     }
   };
 
   const logout = async () => {
     try {
+      await api.post("/auth/logout");
+
       await signOut(auth);
     } catch (error) {
-      console.error("Firebase sign out failed:", error);
+      console.error("Logout failed:", error);
     } finally {
-      localStorage.removeItem("token");
       localStorage.removeItem("user");
       setCurrentUser(null);
     }
@@ -105,7 +98,6 @@ export const AuthProvider = ({ children }) => {
       if (!firebaseUser) {
         setCurrentUser(null);
         localStorage.removeItem("user");
-        localStorage.removeItem("token");
       }
       setLoading(false);
     });
@@ -117,7 +109,7 @@ export const AuthProvider = ({ children }) => {
     currentUser,
     registerEmailPassword,
     loginEmailPassword,
-    googleLogin,
+    loginWithGoogle,
     logout,
   };
 

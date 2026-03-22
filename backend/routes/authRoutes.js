@@ -3,6 +3,7 @@ import {
   registerEmailPassword,
   loginEmailPassword,
   handleGoogleAuth,
+  logoutUser,
 } from "../controllers/authController.js";
 import { protect } from "../middlewares/authMiddleware.js";
 
@@ -11,5 +12,6 @@ const router = express.Router();
 router.post("/register-email", registerEmailPassword);
 router.post("/login-email", loginEmailPassword); // expects a idToken sent by the frontend
 router.post("/login-google", handleGoogleAuth);
+router.post("/logout", logoutUser);
 
 export default router;
