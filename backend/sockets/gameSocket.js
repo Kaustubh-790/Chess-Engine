@@ -1,27 +1,37 @@
 import { gameService } from "../services/gameService.js";
 import { calculateElo } from "../utils/calculateElo.js";
 
+const localSockets = new Map();
+
+const smartEmit = (io, socketId, event, data) => {
+  const local = localSockets.get(socketId);
+  if (local?.connected) {
+    local.emit(event, data);
+  } else {
+    io.to(socketId).emit(event, data);
+  }
+};
+
+const gameEmit = (io, gameId, event, data, players) => {
+  const wLocal = localSockets.get(players.white.socketId);
+  const bLocal = localSockets.get(players.black.socketId);
+
+  if (wLocal?.connected && bLocal?.connected) {
+    wLocal.emit(event, data);
+    bLocal.emit(event, data);
+  } else {
+    io.to(gameId).emit(event, data);
+  }
+};
+
 const handleGameOver = async (io, game, winner, reason) => {
-  const { gameId, players, instance } = game;
+  const { gameId, players } = game;
 
-  const dateString = new Date().toISOString().split("T")[0].replace(/-/g, ".");
-  const resultString =
-    winner === "white" ? "1-0" : winner === "black" ? "0-1" : "1/2-1/2";
-
-  instance.header("Event", "Arena Match");
-  instance.header("Site", "local");
-  instance.header("Date", dateString);
-  instance.header("White", players.white.user.userName);
-  instance.header("Black", players.black.user.userName);
-  instance.header("Result", resultString);
-
-  const finalPgn = instance.pgn();
-
+  const finalPgn = gameService.buildFinalPgn(game, winner, players);
   const whiteResult =
     winner === "white" ? "win" : winner === "draw" ? "draw" : "loss";
   const blackResult =
     winner === "black" ? "win" : winner === "draw" ? "draw" : "loss";
-
   const whiteStats = calculateElo(
     players.white.user.rating,
     players.black.user.rating,
@@ -35,7 +45,7 @@ const handleGameOver = async (io, game, winner, reason) => {
     players.black.user.gamesPlayed,
   );
 
-  io.to(gameId).emit("game_over", {
+  const gameOverPayload = {
     winner,
     reason,
     pgn: finalPgn,
@@ -43,7 +53,9 @@ const handleGameOver = async (io, game, winner, reason) => {
       white: { delta: whiteStats.delta, newRating: whiteStats.newRating },
       black: { delta: blackStats.delta, newRating: blackStats.newRating },
     },
-  });
+  };
+
+  gameEmit(io, gameId, "game_over", gameOverPayload, players);
 
   try {
     const { matchResultQueue } = await import("../workers/dbQueue.js");
@@ -56,61 +68,48 @@ const handleGameOver = async (io, game, winner, reason) => {
       pgn: finalPgn,
       whiteStats,
       blackStats,
-      moveCount: instance.history().length,
+      moveCount: game.moves.length,
     });
-
-    console.log(`[Queue] Match ${gameId} dispatched to background worker.`);
   } catch (err) {
-    console.error(
-      `Failed to dispatch match data for ${gameId} to queue:`,
-      err.message,
-    );
+    console.error(`Failed to queue match ${gameId}:`, err.message);
   }
 
   const finishedArenaId = game.arenaId;
   await gameService.removeGame(gameId);
 
   if (finishedArenaId) {
-    io.to(gameId).emit("requeue_countdown", {
-      secondsLeft: 5,
-      arenaId: finishedArenaId,
-    });
+    gameEmit(
+      io,
+      gameId,
+      "requeue_countdown",
+      { secondsLeft: 5, arenaId: finishedArenaId },
+      players,
+    );
 
     setTimeout(async () => {
       const { arenaService } = await import("../arena/arenaService.js");
       const { startMatch } = await import("../utils/socketStartMatch.js");
-
       const joined = [];
-
-      if (players.white.socketId) {
+      for (const side of ["white", "black"]) {
+        const player = players[side];
+        const sock =
+          localSockets.get(player.socketId) ||
+          io.sockets.sockets.get(player.socketId);
+        if (!sock?.connected) continue;
         const res = await arenaService.joinArena(
           finishedArenaId,
-          { id: players.white.socketId },
-          players.white.user,
+          sock,
+          player.user,
         );
         if (res.success) {
-          io.in(players.white.socketId).socketsJoin(`arena:${finishedArenaId}`);
+          sock.join(`arena:${finishedArenaId}`);
           joined.push(true);
         }
       }
-
-      if (players.black.socketId) {
-        const res = await arenaService.joinArena(
-          finishedArenaId,
-          { id: players.black.socketId },
-          players.black.user,
-        );
-        if (res.success) {
-          io.in(players.black.socketId).socketsJoin(`arena:${finishedArenaId}`);
-          joined.push(true);
-        }
-      }
-
-      await arenaService.broadcastQueueUpdate(finishedArenaId);
-
+      arenaService.broadcastQueueUpdate(finishedArenaId);
       for (let i = 0; i < joined.length; i++) {
-        const newGame = await arenaService.matchArena(finishedArenaId);
-        if (newGame) startMatch(io, newGame);
+        const ng = await arenaService.matchArena(finishedArenaId);
+        if (ng) startMatch(io, ng);
         else break;
       }
     }, 5000);
@@ -118,37 +117,31 @@ const handleGameOver = async (io, game, winner, reason) => {
 };
 
 export const registerGameHandler = (io, socket) => {
+  localSockets.set(socket.id, socket);
+  socket.on("disconnect", () => localSockets.delete(socket.id));
+
   socket.on("rejoin_game", async ({ gameId }) => {
-    const userId = socket.user._id.toString();
-
-    const result = await gameService.rejoinGame(gameId, userId, socket.id);
-
-    if (!result) {
+    const result = await gameService.rejoinGame(
+      gameId,
+      socket.user._id.toString(),
+      socket.id,
+    );
+    if (!result)
       return socket.emit("rejoin_failed", { reason: "game_not_found" });
-    }
-
     const { game, color } = result;
     const { instance, players, timeControl } = game;
-
     socket.join(gameId);
-
-    console.log(
-      `[Rejoin] ${socket.user.userName} rejoined game ${gameId} as ${color}`,
-    );
-
-    const opponentColor = color === "white" ? "black" : "white";
-    const opponent = players[opponentColor];
-
+    const opp = color === "white" ? players.black : players.white;
     socket.emit("rejoin_success", {
       gameId,
-      arenaId: game.arenaId ?? null,
+      arenaId: game.arenaId,
       color,
-      opponent: opponent.user.userName,
-      opponentRating: opponent.user.rating,
+      opponent: opp.user.userName,
+      opponentRating: opp.user.rating,
       fen: instance.fen(),
       turn: instance.turn(),
       pgn: instance.pgn(),
-      timeControl: timeControl ? timeControl.label : "unlimited",
+      timeControl: timeControl?.label || "unlimited",
       whiteTime: players.white.time,
       blackTime: players.black.time,
     });
@@ -158,16 +151,12 @@ export const registerGameHandler = (io, socket) => {
     const game = await gameService.getGame(gameId);
     if (!game)
       return socket.emit("move_rejected", { reason: "game_not_found" });
-
     const { players } = game;
     const isWhite = players.white.socketId === socket.id;
     const isBlack = players.black.socketId === socket.id;
-
     if (!isWhite && !isBlack)
       return socket.emit("move_rejected", { reason: "not_your_game" });
-
-    const winner = isWhite ? "black" : "white";
-    await handleGameOver(io, game, winner, "resignation");
+    await handleGameOver(io, game, isWhite ? "black" : "white", "resignation");
   });
 
   socket.on("move_attempt", async ({ gameId, from, to, promotion }) => {
@@ -176,97 +165,118 @@ export const registerGameHandler = (io, socket) => {
       return socket.emit("move_rejected", { reason: "game_not_found" });
 
     const { instance, players } = game;
-    const expectedTurnLength = instance.history().length;
-
     const isWhite = players.white.socketId === socket.id;
     const isBlack = players.black.socketId === socket.id;
     const playerColor = isWhite ? "w" : isBlack ? "b" : null;
 
     if (!playerColor)
       return socket.emit("move_rejected", { reason: "not_your_game" });
-
     if (instance.turn() !== playerColor)
       return socket.emit("move_rejected", { reason: "not_your_turn" });
 
     try {
       const piece = instance.get(from);
       const isPromotion =
-        piece && piece.type === "p" && (to.endsWith("8") || to.endsWith("1"));
-
-      const moveData = { from, to };
-      if (isPromotion) moveData.promotion = promotion || "q";
-
-      const move = instance.move(moveData);
+        piece?.type === "p" && (to.endsWith("8") || to.endsWith("1"));
+      const move = instance.move({
+        from,
+        to,
+        ...(isPromotion && { promotion: promotion || "q" }),
+      });
       if (!move)
         return socket.emit("move_rejected", { reason: "illegal_move" });
 
+      const updatedMoves = [...game.moves, move.san];
       const now = Date.now();
-      const activeColorStr = isWhite ? "white" : "black";
-      const nextColorStr = isWhite ? "black" : "white";
+      const activeStr = isWhite ? "white" : "black";
+      const nextStr = isWhite ? "black" : "white";
+      const tc = game.timeControl;
+      const snapLen = updatedMoves.length;
 
-      if (game.timeControl && game.timeControl.label !== "unlimited") {
-        if (game.lastMoveTime) {
-          const elapsed = now - game.lastMoveTime;
-          players[activeColorStr].time -= elapsed;
+      if (tc && tc.label !== "unlimited") {
+        if (game.lastMoveTime)
+          players[activeStr].time -= now - game.lastMoveTime;
+
+        if (players[activeStr].time <= 0 && game.lastMoveTime) {
+          players[activeStr].time = 0;
+          await gameService.saveGameState(
+            gameId,
+            instance,
+            players,
+            now,
+            updatedMoves,
+          );
+          gameEmit(
+            io,
+            gameId,
+            "board_sync",
+            {
+              fen: instance.fen(),
+              lastMove: move,
+              turn: instance.turn(),
+              whiteTime: players.white.time,
+              blackTime: players.black.time,
+            },
+            players,
+          );
+          return await handleGameOver(io, game, nextStr, "timeout");
         }
 
-        if (players[activeColorStr].time <= 0 && game.lastMoveTime) {
-          players[activeColorStr].time = 0;
-          io.to(gameId).emit("board_sync", {
-            fen: instance.fen(),
-            lastMove: move,
-            turn: instance.turn(),
-            whiteTime: players.white.time,
-            blackTime: players.black.time,
-          });
-          return await handleGameOver(io, game, nextColorStr, "timeout");
-        }
-
-        players[activeColorStr].time +=
-          (game.timeControl.increment || 0) * 1000;
+        players[activeStr].time += (tc.increment || 0) * 1000;
         game.lastMoveTime = now;
 
         if (!instance.isGameOver()) {
           setTimeout(async () => {
-            const checkGame = await gameService.getGame(gameId);
-            if (!checkGame) return;
-
-            if (checkGame.instance.history().length !== expectedTurnLength + 1)
-              return;
-
-            const latestPlayers = checkGame.players;
-            latestPlayers[nextColorStr].time = 0;
-            io.to(gameId).emit("board_sync", {
-              fen: checkGame.instance.fen(),
-              lastMove: null,
-              turn: checkGame.instance.turn(),
-              whiteTime: latestPlayers.white.time,
-              blackTime: latestPlayers.black.time,
-            });
-            await handleGameOver(io, checkGame, activeColorStr, "timeout");
-          }, players[nextColorStr].time);
+            const check = await gameService.getGame(gameId);
+            if (!check || check.moves.length !== snapLen) return;
+            check.players[nextStr].time = 0;
+            await gameService.saveGameState(
+              gameId,
+              check.instance,
+              check.players,
+              null,
+              check.moves,
+            );
+            gameEmit(
+              io,
+              gameId,
+              "board_sync",
+              {
+                fen: check.instance.fen(),
+                lastMove: null,
+                turn: check.instance.turn(),
+                whiteTime: check.players.white.time,
+                blackTime: check.players.black.time,
+              },
+              check.players,
+            );
+            await handleGameOver(io, check, activeStr, "timeout");
+          }, players[nextStr].time);
         }
       }
 
-      await gameService.saveGameState(
-        gameId,
-        instance,
-        players,
-        game.lastMoveTime,
-      );
+      const [, boardSyncPayload] = await Promise.all([
+        gameService.saveGameState(
+          gameId,
+          instance,
+          players,
+          game.lastMoveTime,
+          updatedMoves,
+        ),
+        Promise.resolve({
+          fen: instance.fen(),
+          lastMove: move,
+          turn: instance.turn(),
+          whiteTime: players.white.time,
+          blackTime: players.black.time,
+        }),
+      ]);
 
-      io.to(gameId).emit("board_sync", {
-        fen: instance.fen(),
-        lastMove: move,
-        turn: instance.turn(),
-        whiteTime: players?.white?.time,
-        blackTime: players?.black?.time,
-      });
+      gameEmit(io, gameId, "board_sync", boardSyncPayload, players);
 
       if (instance.isGameOver()) {
-        let reason = "unknown";
-        let winner = null;
-
+        let reason = "unknown",
+          winner = null;
         if (instance.isCheckmate()) {
           reason = "checkmate";
           winner = instance.turn() === "w" ? "black" : "white";
@@ -283,11 +293,15 @@ export const registerGameHandler = (io, socket) => {
           reason = "agreement";
           winner = "draw";
         }
-
-        await handleGameOver(io, game, winner, reason);
+        await handleGameOver(
+          io,
+          { ...game, moves: updatedMoves },
+          winner,
+          reason,
+        );
       }
-    } catch (error) {
-      console.error("[Game Error]:", error);
+    } catch (err) {
+      console.error("[Game Error]:", err);
       socket.emit("move_rejected", { reason: "illegal_move" });
     }
   });
