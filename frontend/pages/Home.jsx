@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useAuth } from "../contexts/AuthContext";
-import { useSocket } from "../contexts/SocketContex";
+import { useSocket } from "../contexts/SocketContext";
 import { useNavigate } from "react-router-dom";
 
 const Home = () => {
