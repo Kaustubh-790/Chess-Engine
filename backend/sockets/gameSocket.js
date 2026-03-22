@@ -156,8 +156,6 @@ export const registerGameHandler = (io, socket) => {
           );
         }
 
-        gameService.removeGame(gameId);
-
         const finishedArenaId = game.arenaId;
 
         gameService.removeGame(gameId);
@@ -173,22 +171,23 @@ export const registerGameHandler = (io, socket) => {
             const { startMatch } = await import("../utils/socketStartMatch.js");
 
             if (players.white.socket.connected) {
-              const resW = arenaService.joinTimedArena(
+              const resW = arenaService.joinArena(
                 finishedArenaId,
                 players.white.socket,
                 players.white.user,
               );
+
               if (resW.success)
-                startMatch(arenaService.matchTimedArena(finishedArenaId));
+                startMatch(arenaService.matchArena(finishedArenaId));
             }
             if (players.black.socket.connected) {
-              const resB = arenaService.joinTimedArena(
+              const resB = arenaService.joinArena(
                 finishedArenaId,
                 players.black.socket,
                 players.black.user,
               );
               if (resB.success)
-                startMatch(arenaService.matchTimedArena(finishedArenaId));
+                startMatch(arenaService.matchArena(finishedArenaId));
             }
           }, 5000);
         }

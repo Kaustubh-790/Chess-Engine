@@ -9,12 +9,13 @@ class ArenaService {
   createArena(duration /*minutes */) {
     const arenaId = crypto.randomUUID();
     const endTime = Date.now() + duration * 60 * 1000;
-    this.arena.set(arenaId, { arenaId, endTime, queue: [] });
+
+    this.timedArenas.set(arenaId, { arenaId, endTime, queue: [] });
     return { arenaId, endTime };
   }
 
   joinArena(arenaId, socket, user) {
-    const arena = this.arena.get(arenaId);
+    const arena = this.timedArenas.get(arenaId);
     if (!arena) return { error: "Arena not found" };
     if (Date.now() > arena.endTime) return { error: "Arena time has expired" };
 
