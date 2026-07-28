@@ -94,29 +94,7 @@ Adding a second identical EC2 instance behind an ALB would move the clean ceilin
 
 ## Architecture
 
-```mermaid
-flowchart TD
-    A[Frontend\nReact · Vite · Vercel]
-
-    subgraph "AWS EC2 — Ubuntu 22.04"
-        B[Nginx\nReverse Proxy · SSL via Certbot]
-        C[Node.js Core 0\nPM2 cluster]
-        D[Node.js Core 1\nPM2 cluster]
-        E[(Redis\nDocker · pub/sub adapter)]
-        F[BullMQ Worker\nAsync DB writes]
-    end
-
-    G[(MongoDB Atlas)]
-
-    A -->|WSS / HTTPS| B
-    B --> C
-    B --> D
-    C <-->|pub/sub adapter| D
-    C --> E
-    D --> E
-    E --> F
-    F --> G
-```
+<img src="./frontend//public/tempo_architecture.svg" width="900"/>
 
 **Key design decisions:**
 
